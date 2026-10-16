@@ -119,7 +119,7 @@ HFONT GetFontFromFont(PHookKernel GlobalData, HFONT Font)
 	if (GetObjectW(Font, sizeof(LogFont), &LogFont) == 0)
 		return nullptr;
 
-	LogFont.lfCharSet = SHIFTJIS_CHARSET;
+	LogFont.lfCharSet = GlobalData->Charset;
 	Font = CreateFontIndirectW(&LogFont);
 
 	return Font;
@@ -575,11 +575,11 @@ INT NTAPI LeEnumFontCallbackAFromW(CONST LOGFONTW *lf, CONST TEXTMETRICW *TextMe
 	EnumParam = (PGDI_ENUM_FONT_PARAM)param;
 
 	EnumLogFontW = (LPENUMLOGFONTEXW)lf;
-	ConvertUnicodeLogfontToAnsi(&EnumLogFontA.elfLogFont, &EnumLogFontW->elfLogFont, 932);
+	ConvertUnicodeLogfontToAnsi(&EnumLogFontA.elfLogFont, &EnumLogFontW->elfLogFont, EnumParam->GlobalData->CodePage);
 
-	WideCharToMultiByte(932, 0, EnumLogFontW->elfFullName, StrLengthW(EnumLogFontW->elfFullName) + 1, (PSTR)EnumLogFontA.elfFullName, sizeof(EnumLogFontA.elfFullName), nullptr, nullptr);
-	WideCharToMultiByte(932, 0, EnumLogFontW->elfScript, StrLengthW(EnumLogFontW->elfScript) + 1, (PSTR)EnumLogFontA.elfScript, sizeof(EnumLogFontA.elfScript), nullptr, nullptr);
-	WideCharToMultiByte(932, 0, EnumLogFontW->elfStyle, StrLengthW(EnumLogFontW->elfStyle) + 1, (PSTR)EnumLogFontA.elfStyle, sizeof(EnumLogFontA.elfStyle), nullptr, nullptr);
+	WideCharToMultiByte(EnumParam->GlobalData->CodePage, 0, EnumLogFontW->elfFullName, StrLengthW(EnumLogFontW->elfFullName) + 1, (PSTR)EnumLogFontA.elfFullName, sizeof(EnumLogFontA.elfFullName), nullptr, nullptr);
+	WideCharToMultiByte(EnumParam->GlobalData->CodePage, 0, EnumLogFontW->elfScript, StrLengthW(EnumLogFontW->elfScript) + 1, (PSTR)EnumLogFontA.elfScript, sizeof(EnumLogFontA.elfScript), nullptr, nullptr);
+	WideCharToMultiByte(EnumParam->GlobalData->CodePage, 0, EnumLogFontW->elfStyle, StrLengthW(EnumLogFontW->elfStyle) + 1, (PSTR)EnumLogFontA.elfStyle, sizeof(EnumLogFontA.elfStyle), nullptr, nullptr);
 
 	if (TextMetric->VerifyMagic() == FALSE)
 	{
@@ -591,8 +591,14 @@ INT NTAPI LeEnumFontCallbackAFromW(CONST LOGFONTW *lf, CONST TEXTMETRICW *TextMe
 		tma = &TextMetric->TextMetricA;
 	}
 
-	static BYTE SJISIndentor[] = { 0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, 0x00 };
-	RtlCopyMemory(&EnumLogFontA.elfScript, SJISIndentor, sizeof(SJISIndentor));
+	//
+	// Report the configured script name (originally the hardcoded Shift-JIS
+	// "日本語") so GDI associates the enumerated family with the wanted script.
+	//
+	if (EnumParam->GlobalData->ScriptNameAnsi[0])
+	{
+		RtlCopyMemory(&EnumLogFontA.elfScript, EnumParam->GlobalData->ScriptNameAnsi, StrLengthA(EnumParam->GlobalData->ScriptNameAnsi) + 1);
+	}
 
 	return ((FONTENUMPROCA)(EnumParam->Callback))(&EnumLogFontA.elfLogFont, tma, FontType, EnumParam->lParam);
 }
@@ -640,7 +646,7 @@ INT NTAPI LeEnumFontCallbackW(CONST LOGFONTW *lf, CONST TEXTMETRICW *TextMetricW
 				break;
 			}
 
-			EnumLogFontEx->elfLogFont.lfCharSet = SHIFTJIS_CHARSET;
+			EnumLogFontEx->elfLogFont.lfCharSet = EnumParam->GlobalData->Charset;
 		}
 
 		Status = EnumParam->GlobalData->AdjustFontData(EnumParam->DC, EnumLogFontEx, &TextMetric, FontType);
@@ -826,7 +832,7 @@ PVOID               FreeListLocalFont
 		enumlfex = (PENUMLOGFONTEXDVW)AllocStack(SizeOfEnumLogFont);
 
 		CopyMemory(enumlfex, EnumLogFont, SizeOfEnumLogFont);
-		enumlfex->elfEnumLogfontEx.elfLogFont.lfCharSet = SHIFTJIS_CHARSET;
+		enumlfex->elfEnumLogfontEx.elfLogFont.lfCharSet = GlobalData->Charset;
 
 		EnumLogFont = enumlfex;
 	}
@@ -971,7 +977,7 @@ VOID HookKernel::InitFontCharsetInfo()
 	DC = GetDC(nullptr);
 	this->OriginalCharset = GetTextCharset(DC);
 
-	lf.lfCharSet = SHIFTJIS_CHARSET;
+	lf.lfCharSet = this->Charset;
 	lf.lfFaceName[0] = 0;
 
 	auto EnumFontCallback = [](CONST LOGFONTW *lf, CONST TEXTMETRICW *, DWORD, LPARAM Param)

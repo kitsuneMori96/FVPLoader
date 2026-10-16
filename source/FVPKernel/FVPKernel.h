@@ -45,6 +45,13 @@ typedef struct HookKernel
 	WCHAR       ScriptNameW[LF_FACESIZE];
 	ULONG_PTR   OriginalCharset;
 
+	//
+	// Encoding settings, read from FVPLoader.ini (see LoadEncodingConfig).
+	//
+	UINT        CodePage;
+	BYTE        Charset;
+	CHAR        ScriptNameAnsi[LF_FACESIZE];
+
 	ml::HashTableT<TEXT_METRIC_INTERNAL>     TextMetricCache;
 
 	API_POINTER(GetVersionExA)       StubGetVersionExA;
@@ -114,6 +121,10 @@ typedef struct HookKernel
 		RtlZeroMemory(ScriptNameA, sizeof(ScriptNameA));
 		RtlZeroMemory(ScriptNameW, sizeof(ScriptNameW));
 		OriginalCharset = 0;
+
+		CodePage = 932;
+		Charset  = SHIFTJIS_CHARSET;
+		RtlZeroMemory(ScriptNameAnsi, sizeof(ScriptNameAnsi));
 
 	}
 

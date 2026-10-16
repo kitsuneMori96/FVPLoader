@@ -1,0 +1,13 @@
+source/*/Release/
+source/Release/
+source/*/x64/
+source/*/Win32/
+*.obj
+*.idb
+*.pdb
+*.iobj
+*.ipdb
+*.tlog
+*.lastbuildstate
+*.aps
+*.user

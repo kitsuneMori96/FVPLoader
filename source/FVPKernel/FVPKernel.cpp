@@ -19,6 +19,117 @@ PHookKernel LeGetGlobalData()
 	return FVPKernel;
 }
 
+//=========================Encoding Config==========================
+
+#define FVP_CONFIG_FILE     L"FVPLoader.ini"
+#define FVP_CONFIG_SECTION  L"Encoding"
+
+//
+// One decodable language profile. The code page drives every ANSI <-> UTF-16
+// conversion, the charset is forced on the fonts handed out by the GDI hooks
+// and the locale is used by the lstrcmpiA hook. ScriptName is the localized
+// script name (e.g. Shift-JIS "日本語") written to LOGFONTEX::elfScript, which
+// is how GDI associates a font family with a script; it keeps the original
+// X'moe hack working for CJK code pages.
+//
+typedef struct
+{
+	UINT    CodePage;
+	UINT    LocaleID;
+	BYTE    Charset;
+	WCHAR   ScriptName[LF_FACESIZE];
+} FVP_LANGUAGE_PROFILE;
+
+static const FVP_LANGUAGE_PROFILE FVPLanguageProfiles[] =
+{
+	{  932, 0x0411, SHIFTJIS_CHARSET,     L"\x65E5\x672C\x8A9E" },                 // ja-JP "日本語"
+	{  936, 0x0804, GB2312_CHARSET,       L"\x7B80\x4F53\x4E2D\x6587" },           // zh-CN "简体中文"
+	{  950, 0x0404, CHINESEBIG5_CHARSET,  L"\x7E41\x9AD4\x4E2D\x6587" },           // zh-TW "繁體中文"
+	{  949, 0x0412, HANGUL_CHARSET,       L"\xD55C\xAD6D\xC5B4" },                 // ko-KR "한국어"
+	{ 1252, 0x0409, ANSI_CHARSET,         L"Latin" },                              // en-US
+	{65001, 0x0411, DEFAULT_CHARSET,      L"\x65E5\x672C\x8A9E" },                 // UTF-8, script name stays SJIS
+};
+
+//
+// Look up the profile of CodePage. Anything outside the table above is still
+// honoured (the code page drives the conversions) but gets neutral defaults.
+//
+static VOID GetLanguageProfile(UINT CodePage, FVP_LANGUAGE_PROFILE* Profile)
+{
+	for (ULONG_PTR i = 0; i < countof(FVPLanguageProfiles); i++)
+	{
+		if (FVPLanguageProfiles[i].CodePage == CodePage)
+		{
+			RtlCopyMemory(Profile, &FVPLanguageProfiles[i], sizeof(*Profile));
+			return;
+		}
+	}
+
+	Profile->CodePage      = CodePage;
+	Profile->LocaleID      = 0x0409;            // en-US
+	Profile->Charset       = DEFAULT_CHARSET;   // let GDI pick by face name
+	Profile->ScriptName[0] = 0;
+}
+
+//
+// FVPLoader.ini lives next to FVPKernel.dll, which is the directory the loader
+// and (usually) the game are started from.
+//
+static VOID GetConfigPath(PWSTR Path, ULONG ccPath)
+{
+	HMODULE  Module;
+	LONG_PTR i, Length;
+
+	Module = NULL;
+	GetModuleHandleExW(
+		GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		(LPCWSTR)&GetConfigPath,
+		&Module);
+
+	Path[0] = 0;
+	GetModuleFileNameW(Module, Path, ccPath);
+	Path[ccPath - 1] = 0;
+
+	Length = StrLengthW(Path);
+	for (i = Length; i > 0; i--)
+	{
+		if (Path[i - 1] == L'\\' || Path[i - 1] == L'/')
+			break;
+	}
+
+	if (i + countof(FVP_CONFIG_FILE) > (LONG_PTR)ccPath)
+		i = 0;
+
+	RtlCopyMemory(Path + i, FVP_CONFIG_FILE, sizeof(FVP_CONFIG_FILE));
+}
+
+static VOID LoadEncodingConfig(PHookKernel Kernel)
+{
+	WCHAR                Path[MAX_PATH];
+	WCHAR                ScriptName[LF_FACESIZE];
+	FVP_LANGUAGE_PROFILE Profile;
+	UINT                 CodePage;
+
+	GetConfigPath(Path, countof(Path));
+
+	CodePage = GetPrivateProfileIntW(FVP_CONFIG_SECTION, L"CodePage", 932, Path);
+	if (CodePage == 0 || !IsValidCodePage(CodePage))
+		CodePage = 932;
+
+	GetLanguageProfile(CodePage, &Profile);
+
+	Kernel->CodePage = CodePage;
+	Kernel->Charset  = (BYTE)GetPrivateProfileIntW(FVP_CONFIG_SECTION, L"Charset",  Profile.Charset,  Path);
+	Kernel->LocaleID =          GetPrivateProfileIntW(FVP_CONFIG_SECTION, L"LocaleID", Profile.LocaleID, Path);
+
+	ScriptName[0] = 0;
+	GetPrivateProfileStringW(FVP_CONFIG_SECTION, L"ScriptName", Profile.ScriptName, ScriptName, countof(ScriptName), Path);
+
+	RtlZeroMemory(Kernel->ScriptNameAnsi, sizeof(Kernel->ScriptNameAnsi));
+
+	WideCharToMultiByte(Kernel->CodePage, 0, ScriptName, -1, Kernel->ScriptNameAnsi, sizeof(Kernel->ScriptNameAnsi), NULL, NULL);
+}
+
 //============================My Patch=======================================
 
 
@@ -47,8 +158,8 @@ ATOM WINAPI HookRegisterClassExA(CONST WNDCLASSEXA* lpWndClass)
 	RtlZeroMemory(MenuName, (MenuLength + 1) * 2);
 	RtlZeroMemory(ClassName, (ClassLength + 1) * 2);
 
-	MultiByteToWideChar(932, 0, lpWndClass->lpszMenuName, MenuLength, MenuName, MAX_PATH);
-	MultiByteToWideChar(932, 0, lpWndClass->lpszClassName, ClassLength, ClassName, MAX_PATH);
+	MultiByteToWideChar(FVPKernel->CodePage, 0, lpWndClass->lpszMenuName, MenuLength, MenuName, MAX_PATH);
+	MultiByteToWideChar(FVPKernel->CodePage, 0, lpWndClass->lpszClassName, ClassLength, ClassName, MAX_PATH);
 
 
 	ClassInfo.cbSize        = sizeof(WNDCLASSEXW);
@@ -90,12 +201,12 @@ HWND WINAPI HookCreateWindowExA(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWi
 	Length = StrLengthA(lpClassName) + 1;
 	ClassName = (LPWSTR)AllocStack(Length * sizeof(WCHAR));
 	RtlZeroMemory(ClassName, Length * sizeof(WCHAR));
-	MultiByteToWideChar(932, 0, lpClassName, Length, ClassName, Length * sizeof(WCHAR));
+	MultiByteToWideChar(FVPKernel->CodePage, 0, lpClassName, Length, ClassName, Length * sizeof(WCHAR));
 
 	Length = StrLengthA(lpWindowName) + 1;
 	WindowName = (LPWSTR)AllocStack(Length * sizeof(WCHAR));
 	RtlZeroMemory(WindowName, Length * sizeof(WCHAR));
-	MultiByteToWideChar(932, 0, lpWindowName, Length, WindowName, Length * sizeof(WCHAR));
+	MultiByteToWideChar(FVPKernel->CodePage, 0, lpWindowName, Length, WindowName, Length * sizeof(WCHAR));
 	FVPKernel->MainWindow = CreateWindowExW(dwExStyle, ClassName, WindowName, dwStyle, X, Y, nWidth, nHeight, hWndParent, hMenu, hInstance, lpParam);
 	return FVPKernel->MainWindow;
 }
@@ -138,7 +249,7 @@ INT WINAPI HooklStrcmpiA(LPCSTR lpString1, LPCSTR lpString2)
 {
 	int Result;
 
-	Result = CompareStringA(0x411, 1, lpString1, -1, lpString2, -1);
+	Result = CompareStringA(FVPKernel->LocaleID, 1, lpString1, -1, lpString2, -1);
 	return Result - 2;
 }
 
@@ -158,14 +269,14 @@ INT WINAPI HookMessageBoxA(HWND hWnd, LPCSTR lpText, LPCSTR lpCaption, UINT uTyp
 	{
 		TextName = (LPWSTR)AllocStack((TextLength + 1) * 2);
 		RtlZeroMemory(TextName, (TextLength + 1) * 2);
-		MultiByteToWideChar(932, 0, lpText, TextLength, TextName, (TextLength + 1) * 2);
+		MultiByteToWideChar(FVPKernel->CodePage, 0, lpText, TextLength, TextName, (TextLength + 1) * 2);
 	}
 
 	if (CaptionLength)
 	{
 		CaptionName = (LPWSTR)AllocStack((CaptionLength + 1) * 2);
 		RtlZeroMemory(CaptionName, (CaptionLength + 1) * 2);
-		MultiByteToWideChar(932, 0, lpCaption, CaptionLength, CaptionName, (CaptionLength + 1) * 2);
+		MultiByteToWideChar(FVPKernel->CodePage, 0, lpCaption, CaptionLength, CaptionName, (CaptionLength + 1) * 2);
 	}
 
 	return MessageBoxW(hWnd, TextName, CaptionName, uType);
@@ -194,7 +305,7 @@ BOOL WINAPI HookGetMenuItemInfoA(HMENU hMenu, UINT uItem, BOOL fByPosition, LPME
 
 	if (cchtmp > 0)
 	{
-		ccBuffer = WideCharToMultiByte(932, 0, miitmp.dwTypeData, -1, lpmii->dwTypeData, lpmii->cch, NULL, NULL);
+		ccBuffer = WideCharToMultiByte(FVPKernel->CodePage, 0, miitmp.dwTypeData, -1, lpmii->dwTypeData, lpmii->cch, NULL, NULL);
 		if (ccBuffer > 0)
 		{
 			lpmii->cch = ccBuffer - 1;
@@ -221,7 +332,7 @@ LPCWSTR FASTCALL MultiByteToWideCharInternal(LPCSTR lpString)
 
 	if (UnicodeStr) 
 	{
-		ccBuffer = MultiByteToWideChar(932, 0, lpString, Size, UnicodeStr, Size);
+		ccBuffer = MultiByteToWideChar(FVPKernel->CodePage, 0, lpString, Size, UnicodeStr, Size);
 		UnicodeStr[ccBuffer] = NULL;
 	}
 	return UnicodeStr;
@@ -260,7 +371,7 @@ DWORD WINAPI HookGetGlyphOutlineA(
 {
 	ULONG      len;
 	CHAR       mbchs[2];
-	UINT       cp = 932;
+	UINT       cp = FVPKernel->CodePage;
 
 	if (IsDBCSLeadByteEx(cp, uChar >> 8))
 	{
@@ -289,11 +400,11 @@ HFONT WINAPI HookCreateFontA(int nHeight, int  nWidth, int  nEscapement, int nOr
 	WCHAR FontFace[128];
 
 	RtlZeroMemory(FontFace, sizeof(FontFace));
-	MultiByteToWideChar(932, 0, lpszFace, StrLengthA(lpszFace), FontFace, 128);
+	MultiByteToWideChar(FVPKernel->CodePage, 0, lpszFace, StrLengthA(lpszFace), FontFace, 128);
 
 	return  CreateFontW(nHeight, nWidth, nEscapement, nOrientation,
 		fnWeight, fdwItalic, fdwUnderline, fdwStrikeOut,
-		0x86, fdwOutputPrecision, fdwClipPrecision,
+		FVPKernel->Charset, fdwOutputPrecision, fdwClipPrecision,
 		fdwQuality, fdwPitchAndFamily, FontFace);
 }
 
@@ -324,9 +435,9 @@ BOOL FASTCALL Initialize(HMODULE hModule)
 		return FALSE;
 
 	FVPKernel->OriginalLocaleID = DefaultLocaleID;
-	FVPKernel->LocaleID = 0x411;
 
-	
+	LoadEncodingConfig(FVPKernel);
+
 	FVPKernel->HookGdi32Routines(Nt_LoadLibrary(L"GDI32.DLL"));
 	
 	LOOP_ONCE

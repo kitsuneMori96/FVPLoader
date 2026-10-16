@@ -10,6 +10,36 @@ A simple GUI Loader which allow you to run FAVORITE's game under none-Japanese O
 4. Enjoy your game.
 
 
+## Language / code page selection
+
+FVPKernel used to hardcode code page 932 (Shift-JIS), so the loader only worked
+for Japanese builds. It now reads its settings from `FVPLoader.ini`, next to
+`FVPKernel.dll`:
+
+```ini
+[Encoding]
+CodePage=936
+```
+
+| CodePage | Language |
+| -------- | -------- |
+| 932  | Japanese (Shift-JIS) - default |
+| 936  | Simplified Chinese (GBK) |
+| 950  | Traditional Chinese (Big5) |
+| 949  | Korean (UHC) |
+| 1252 | Western European (Latin-1) |
+| 65001 | Unicode (UTF-8) |
+
+`Charset`, `LocaleID` and `ScriptName` may be overridden as well; they default to
+the values belonging to `CodePage`. An unsupported `CodePage` is passed to the
+Win32 conversion APIs unchanged.
+
+`FVPLoaderGui.exe` writes the file for you - pick the game's encoding from the
+**Encoding** list in the loader window. Because the setting is a plain text file,
+a translation group can ship one file per game with their patch instead of asking
+players to run the game under Locale Emulator.
+
+
 ## Build
 - Microsoft Visual Studio 2017
 - Win10 SDK(19H2)

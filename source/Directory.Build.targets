@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    Build shim: the upstream projects target VS2017 (v141) + ConformanceMode=true.
+    Under modern MSVC (v145 / VS2026) the strict two-phase lookup in NativeLib/my.h
+    fails to compile. Disable conformance mode and pin C++14 to build upstream as-is.
+  -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <ConformanceMode>false</ConformanceMode>
+      <LanguageStandard>stdcpp14</LanguageStandard>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>

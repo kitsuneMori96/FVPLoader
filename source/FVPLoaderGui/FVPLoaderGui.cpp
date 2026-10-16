@@ -22,6 +22,119 @@ struct
 
 LRESULT WINAPI WndProc(HWND, UINT, WPARAM, LPARAM);
 
+//
+// Encoding selection.
+//
+// Only the code page is written to FVPLoader.ini; FVPKernel.dll derives the
+// charset / locale / script name from its own profile table (see
+// FVPLanguageProfiles in FVPKernel.cpp). Keep the code page list in sync.
+//
+#define ENC_INI_FILE     L"FVPLoader.ini"
+#define ENC_INI_SECTION  L"Encoding"
+
+#define IDC_ENCODING_LABEL  1001
+#define IDC_ENCODING_COMBO  1002
+
+static const struct
+{
+	UINT    CodePage;
+	LPCWSTR Label;
+}GUI_Encodings[] =
+{
+	{  932, L"Japanese (Shift-JIS, CP932)"       },
+	{  936, L"Simplified Chinese (GBK, CP936)"   },
+	{  950, L"Traditional Chinese (Big5, CP950)" },
+	{  949, L"Korean (UHC, CP949)"               },
+	{ 1252, L"Western European (CP1252)"         },
+	{65001, L"Unicode (UTF-8, CP65001)"          },
+};
+
+//
+// FVPLoader.ini sits next to the loader, which is also where FVPKernel.dll
+// lives (it reads the very same file from its own module directory).
+//
+static LPCWSTR GUI_EncodingIniPath()
+{
+	static WCHAR Path[MAX_PATH];
+
+	if (Path[0] == 0)
+	{
+		LONG_PTR i, Length;
+
+		GetModuleFileNameW(NULL, Path, countof(Path));
+		Path[countof(Path) - 1] = 0;
+
+		Length = wcslen(Path);
+		for (i = Length; i > 0; i--)
+		{
+			if (Path[i - 1] == L'\\' || Path[i - 1] == L'/')
+				break;
+		}
+
+		RtlCopyMemory(Path + i, ENC_INI_FILE, sizeof(ENC_INI_FILE));
+	}
+
+	return Path;
+}
+
+static UINT GUI_GetConfiguredEncoding(VOID)
+{
+	UINT i, CodePage;
+
+	CodePage = GetPrivateProfileIntW(ENC_INI_SECTION, L"CodePage", 932, GUI_EncodingIniPath());
+
+	for (i = 0; i < countof(GUI_Encodings); i++)
+	{
+		if (GUI_Encodings[i].CodePage == CodePage)
+			return CodePage;
+	}
+
+	return 932;
+}
+
+static VOID GUI_SaveConfiguredEncoding(UINT CodePage)
+{
+	WCHAR Buffer[16];
+
+	wsprintfW(Buffer, L"%u", CodePage);
+	WritePrivateProfileStringW(ENC_INI_SECTION, L"CodePage", Buffer, GUI_EncodingIniPath());
+}
+
+static VOID GUI_CreateEncodingControls(HWND hWnd)
+{
+	HWND  Combo, Label;
+	HFONT Font;
+	UINT  i, Selection;
+
+	Font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+
+	Label = CreateWindowExW(0, L"STATIC", L"Encoding:",
+		WS_CHILD | WS_VISIBLE | SS_LEFT,
+		16, 176, 76, 20, hWnd, (HMENU)IDC_ENCODING_LABEL, NULL, NULL);
+
+	Combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+		WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
+		96, 173, 268, 140, hWnd, (HMENU)IDC_ENCODING_COMBO, NULL, NULL);
+
+	if (Label)
+		SendMessageW(Label, WM_SETFONT, (WPARAM)Font, TRUE);
+
+	if (Combo == NULL)
+		return;
+
+	Selection = 0;
+	for (i = 0; i < countof(GUI_Encodings); i++)
+	{
+		SendMessageW(Combo, CB_ADDSTRING, 0, (LPARAM)GUI_Encodings[i].Label);
+
+		if (GUI_Encodings[i].CodePage == GUI_GetConfiguredEncoding())
+			Selection = i;
+	}
+
+	SendMessageW(Combo, CB_SETCURSEL, Selection, 0);
+	SendMessageW(Combo, WM_SETFONT, (WPARAM)Font, TRUE);
+}
+
 BOOL FASTCALL InitInstance(HINSTANCE hInstance)
 {
    HWND     hWnd;
@@ -446,6 +559,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		Rect.top  = (Height - Rect.bottom) / 2;
 		SetWindowPos(hWnd, HWND_TOP, Rect.left, Rect.top, Rect.right, Rect.bottom, SWP_SHOWWINDOW);
 		DrawBmp(GetDC(hWnd), FVPLoader.Bitmap, 480, 272);
+		GUI_CreateEncodingControls(hWnd);
 	}
 	break;
 
@@ -461,6 +575,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		case IDM_INFO:
 			MessageBoxW(hWnd, L"Author : X'moe\nxmoe.project@gmail.com", L"FVPLoaderGui", MB_OK);
 			break;
+
+		case IDC_ENCODING_COMBO:
+		{
+			LONG_PTR Selection;
+
+			if (WindowEvent != CBN_SELCHANGE)
+				break;
+
+			Selection = SendMessageW((HWND)lParam, CB_GETCURSEL, 0, 0);
+			if (Selection >= 0 && (ULONG_PTR)Selection < countof(GUI_Encodings))
+				GUI_SaveConfiguredEncoding(GUI_Encodings[Selection].CodePage);
+		}
+		break;
 		}
 	}
 	break;

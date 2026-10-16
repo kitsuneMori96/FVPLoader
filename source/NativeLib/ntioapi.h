@@ -686,6 +686,13 @@ typedef struct _FILE_ID_EXTD_BOTH_DIR_INFORMATION
     WCHAR FileName[1];
 } FILE_ID_EXTD_BOTH_DIR_INFORMATION, *PFILE_ID_EXTD_BOTH_DIR_INFORMATION;
 
+// FILE_STAT_INFORMATION, FILE_STAT_LX_INFORMATION and
+// FILE_CASE_SENSITIVE_INFORMATION are declared unconditionally by winnt.h in
+// current Windows SDKs (10.0.22000+), so only keep our private copies when the
+// SDK does not provide them (FILE_CS_FLAG_CASE_SENSITIVE_DIR ships in the same
+// winnt.h section as those types).
+#if !defined(FILE_CS_FLAG_CASE_SENSITIVE_DIR)
+
 // private
 typedef struct _FILE_STAT_INFORMATION
 {
@@ -702,6 +709,8 @@ typedef struct _FILE_STAT_INFORMATION
     ULONG EffectiveAccess;
 } FILE_STAT_INFORMATION, *PFILE_STAT_INFORMATION;
 
+#endif // !defined(FILE_CS_FLAG_CASE_SENSITIVE_DIR)
+
 // private
 typedef struct _FILE_MEMORY_PARTITION_INFORMATION
 {
@@ -716,6 +725,8 @@ typedef struct _FILE_MEMORY_PARTITION_INFORMATION
         ULONG AllFlags;
     } Flags;
 } FILE_MEMORY_PARTITION_INFORMATION, *PFILE_MEMORY_PARTITION_INFORMATION;
+
+#if !defined(FILE_CS_FLAG_CASE_SENSITIVE_DIR)
 
 // private
 typedef struct _FILE_STAT_LX_INFORMATION
@@ -744,6 +755,8 @@ typedef struct _FILE_CASE_SENSITIVE_INFORMATION
 {
     ULONG Flags;
 } FILE_CASE_SENSITIVE_INFORMATION, *PFILE_CASE_SENSITIVE_INFORMATION;
+
+#endif // !defined(FILE_CS_FLAG_CASE_SENSITIVE_DIR)
 
 // NtQueryDirectoryFile types
 
